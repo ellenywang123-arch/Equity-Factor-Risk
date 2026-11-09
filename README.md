@@ -396,6 +396,4 @@ HTML 展示总风险、贡献表和数据审计，**不再展示 Validation**。
 
 Yahoo 财报可能重述；180 天假设不等于真实披露日期；当前 sector、存续样本有历史偏差；样本偏科技、行业不平衡、完整案例筛选和窗口选择均影响风险估计。股数、拆股、股息、成交量和财务比率需要独立核对。此项目尚未达到机构风险模型验证标准。
 
-数据使用需遵守供应商条款。GitHub 不上传原始行情、报表缓存或个人环境。GitHub Actions workflow 已删除；本地测试、输入保护和可选滚动研究函数保留。
 
-Workflow inspired by [KaniGAO/AlphaStream](https://github.com/KaniGAO/AlphaStream). Elleny reports permission from the author to reuse the project. This version implements a new Yahoo layer, eight-style selection, lagged market/sector regressions, Euler contributions and optional past-only validation with AI-assisted development. This does not grant general reuse rights to third parties. Original contributors retain their attribution.
