@@ -1,0 +1,11 @@
+{
+  "tickers": ["AAPL","MSFT","NVDA","GOOGL","META","AMZN","TSLA","AVGO","ORCL","CRM","ADBE","AMD","QCOM","TXN","INTU","CSCO","IBM","ACN","NOW","AMAT","LRCX","KLAC","MU","ADI","INTC","PANW","CRWD","SNPS","CDNS","ANET","UBER","BKNG","ABNB","NFLX","DIS","CMCSA","T","VZ","TMUS","WMT","COST","HD","LOW","NKE","SBUX","MCD","KO","PEP","PG","CL","MDLZ","HSY","JNJ","MRK","ABBV","AMGN","GILD","UNH","CAT","DE","HON","GE","UPS","FDX","XOM","CVX","COP","EOG","SLB","LIN"],
+  "benchmark": "SPY",
+  "start": "2020-01-01",
+  "end": null,
+  "statement_lag_days": 180,
+  "risk_window": 252,
+  "min_history": 126,
+  "min_stocks": 35,
+  "weights": {"AAPL":0.15,"MSFT":0.15,"GOOGL":0.10,"AMZN":0.10,"WMT":0.10,"KO":0.10,"JNJ":0.10,"CAT":0.10,"XOM":0.10}
+}
