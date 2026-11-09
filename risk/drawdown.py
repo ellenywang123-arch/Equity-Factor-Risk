@@ -3,27 +3,6 @@ import numpy as np
 import pandas as pd
 
 
-def portfolio_returns(panel, weights, as_of):
-    """Require complete held-stock returns after their first common valid session."""
-    w = pd.Series(weights, dtype=float)
-    if not np.isfinite(w).all() or not np.isclose(w.sum(), 1):
-        raise ValueError("Finite weights must sum to one")
-    wide = panel["return"].unstack("ticker").sort_index().loc[:as_of]
-    if not w.index.isin(wide.columns).all():
-        raise ValueError("Held stock missing from return data")
-    wide = wide.reindex(columns=w.index)
-    complete = wide.notna().all(axis=1)
-    if not complete.any():
-        raise ValueError("No common held-stock return history")
-    wide = wide.loc[complete[complete].index[0]:]
-    if wide.isna().any().any() or not np.isfinite(wide.to_numpy()).all():
-        raise ValueError("Internal gaps in held-stock returns; do not silently renormalize weights")
-    result = wide @ w
-    if (result <= -1).any():
-        raise ValueError("NAV cannot be compounded through a loss of 100% or more")
-    return result.rename("portfolio_return")
-
-
 def drawdown_series(returns):
     """Include starting NAV=1 when determining the running high-water mark."""
     if returns.empty or not np.isfinite(returns).all() or (returns <= -1).any():
@@ -40,3 +19,24 @@ def drawdown_summary(path):
             "drawdown_start":str(path.index[0].date()),
             "drawdown_end":str(path.index[-1].date()),
             "drawdown_observations":len(path)}
+
+
+if __name__ == "__main__":
+    from data import inputs, return_data
+    import matplotlib.pyplot as plt
+    config, output = inputs()
+    _, returns = return_data(config)
+    path = drawdown_series(returns)
+    summary = drawdown_summary(path)
+    path.to_csv(output/"drawdown.csv")
+    pd.DataFrame([summary]).to_csv(output/"drawdown_summary.csv",index=False)
+    print(f"Simulated daily-rebalanced current drawdown: {summary['current_drawdown']:.2%}")
+    print(f"Maximum drawdown: {summary['max_drawdown']:.2%}")
+    fig, axes = plt.subplots(2,1,figsize=(9,6),sharex=True)
+    path.nav.plot(ax=axes[0],color="#2563eb",title="Hypothetical daily-rebalanced portfolio (no costs)")
+    axes[0].set_ylabel("NAV (initial=1)")
+    path.drawdown.mul(100).plot(ax=axes[1],color="#b45309")
+    axes[1].set_ylabel("Drawdown (%)")
+    fig.tight_layout()
+    fig.savefig(output/"drawdown.png",dpi=150)
+    plt.close(fig)

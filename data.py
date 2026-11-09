@@ -5,6 +5,50 @@ import time
 import numpy as np
 import pandas as pd
 import yfinance as yf
+import argparse
+import matplotlib
+matplotlib.use("Agg")
+
+
+def inputs():
+    """Shared arguments only; each risk module performs its own calculation."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default="config.json")
+    parser.add_argument("--download", action="store_true")
+    args = parser.parse_args()
+    config = json.loads(Path(args.config).read_text(encoding="utf-8-sig"))
+    w = pd.Series(config["weights"], dtype=float)
+    if not np.isfinite(w).all() or (w < 0).any() or not np.isclose(w.sum(), 1):
+        raise ValueError("Long-only weights must be finite and sum to one")
+    if config["confidence"] != 0.95:
+        raise ValueError("This simplified project uses confidence=0.95")
+    if args.download:
+        download(config)
+    output = Path("outputs")
+    output.mkdir(exist_ok=True)
+    return config, output
+
+
+def return_data(config, directory="data"):
+    """Read ONLY held-stock prices; no financial statements needed for market risk."""
+    series = {}
+    for symbol in config["weights"]:
+        p = clean_dates(pd.read_csv(Path(directory)/symbol/"prices.csv", index_col=0))
+        p = p.loc[config["start"]:config.get("end")]
+        if (p["Adj Close"].dropna() <= 0).any():
+            raise ValueError(f"Nonpositive price: {symbol}")
+        series[symbol] = p["Adj Close"].pct_change(fill_method=None)
+    returns = pd.DataFrame(series).sort_index()
+    valid = returns.notna().all(axis=1)
+    if not valid.any():
+        raise ValueError("No common holding history")
+    returns = returns.loc[valid[valid].index[0]:]
+    if not np.isfinite(returns.to_numpy()).all():
+        raise ValueError("Missing internal holding returns; weights will not be renormalized")
+    portfolio = (returns @ pd.Series(config["weights"])).rename("portfolio_return")
+    if (portfolio <= -1).any():
+        raise ValueError("Cannot compound a loss of 100% or more")
+    return returns, portfolio
 
 
 def clean_dates(frame):
@@ -18,7 +62,7 @@ def download(config, directory="data"):
     root.mkdir(parents=True, exist_ok=True)
     yf.set_tz_cache_location(str(root / "yf-cache"))
     status = {}
-    for symbol in dict.fromkeys(config["tickers"] + [config["benchmark"]]):
+    for symbol in config["weights"]:
         folder = root / symbol
         folder.mkdir(exist_ok=True)
         try:
@@ -27,17 +71,16 @@ def download(config, directory="data"):
             if history.empty or "Adj Close" not in history:
                 raise ValueError("No adjusted price history")
             history.to_csv(folder / "prices.csv")
-            if symbol != config["benchmark"]:
-                income, balance = ticker.income_stmt, ticker.balance_sheet
-                if income.empty or balance.empty:
-                    raise ValueError("Annual statements unavailable")
-                income.to_csv(folder / "income.csv")
-                balance.to_csv(folder / "balance.csv")
-                shares = ticker.get_shares_full(start=config["start"], end=config["end"])
-                if shares is None or shares.empty:
-                    raise ValueError("Historical share counts unavailable")
-                clean_dates(shares.to_frame("shares")).to_csv(folder / "shares.csv")
-                (folder / "metadata.json").write_text(json.dumps({"sector": ticker.info.get("sector", "Unknown")}), encoding="utf-8")
+            income, balance = ticker.income_stmt, ticker.balance_sheet
+            if income.empty or balance.empty:
+                raise ValueError("Annual statements unavailable")
+            income.to_csv(folder / "income.csv")
+            balance.to_csv(folder / "balance.csv")
+            shares = ticker.get_shares_full(start=config["start"], end=config["end"])
+            if shares is None or shares.empty:
+                raise ValueError("Historical share counts unavailable")
+            clean_dates(shares.to_frame("shares")).to_csv(folder / "shares.csv")
+
             status[symbol] = "ok"
         except Exception as exc:
             status[symbol] = str(exc)
@@ -45,8 +88,8 @@ def download(config, directory="data"):
         time.sleep(0.15)
     manifest = {"downloaded_at_utc": pd.Timestamp.now(tz="UTC").isoformat(), "config":config, "status":status}
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    if status.get(config["benchmark"]) != "ok":
-        raise ValueError("Benchmark download failed; see data/manifest.json")
+    if any(v != "ok" for v in status.values()):
+        raise ValueError("A held stock download failed; retry rather than omit the holding")
     return manifest
 
 
@@ -75,10 +118,8 @@ def annual_metrics(income, balance, lag):
 
 def build_panel(config, directory="data"):
     root = Path(directory)
-    benchmark = clean_dates(pd.read_csv(root/config["benchmark"]/"prices.csv", index_col=0))
-    market = benchmark["Adj Close"].pct_change(fill_method=None).rename("market_return")
-    frames, audit = [], []
-    for symbol in config["tickers"]:
+    frames = []
+    for symbol in config["weights"]:
         folder = root/symbol
         try:
             prices = clean_dates(pd.read_csv(folder/"prices.csv", index_col=0))
@@ -95,18 +136,15 @@ def build_panel(config, directory="data"):
             p["market_cap"] = p["Close"] * p.shares * future_split
             p["adjusted_price"] = p["Adj Close"]
             p["return"] = p.adjusted_price.pct_change(fill_method=None)
-            p["market_return"] = market.reindex(p.index)
             # Yahoo dividend series and Close share the provider's split-adjusted basis.
             p["dividend_yield"] = p.get("Dividends", pd.Series(0., index=p.index)).rolling("365D").sum()/p["Close"]
             # Dollar-volume / market-cap is invariant to a consistent price scale.
             p["turnover"] = p.Volume / (p.shares * future_split)
-            p["sector"] = json.loads((folder/"metadata.json").read_text())["sector"]
             p["ticker"] = symbol
             p = p.replace([np.inf, -np.inf], np.nan)
             frames.append(p)
-            audit.append({"ticker":symbol,"rows":len(p),"duplicate_dates":int(p.index.duplicated().sum()),"missing_price":int(p.adjusted_price.isna().sum()),"nonpositive_price":int((p.adjusted_price<=0).sum()),"large_return_days":int((p["return"].abs()>.4).sum()),"status":"ok"})
         except Exception as exc:
-            audit.append({"ticker":symbol,"status":str(exc)})
+            raise ValueError(f"Cannot load held stock {symbol}: {exc}") from exc
     if not frames:
         raise ValueError("No usable stock data; run --download and inspect data/manifest.json")
-    return pd.concat(frames).reset_index().set_index(["date","ticker"]).sort_index(), pd.DataFrame(audit)
+    return pd.concat(frames).reset_index().set_index(["date","ticker"]).sort_index()

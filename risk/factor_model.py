@@ -1,40 +1,44 @@
-"""Lagged factor-return regression and Euler factor attribution."""
+"""Eight style exposures relative to the current held stocks, not the market."""
 import numpy as np
 import pandas as pd
-
-def regress(exposures, panel, minimum=35):
-    # Shift each stock by one of ITS observed sessions; accept only adjacent benchmark dates.
-    dates = panel.index.get_level_values("date").unique().sort_values()
-    previous = dict(zip(dates[1:],dates[:-1]))
-    lagged = exposures.groupby(level="ticker").shift(1)
-    source_date = pd.Series(exposures.index.get_level_values("date"),index=exposures.index).groupby(level="ticker").shift(1)
-    expected = pd.Series(exposures.index.get_level_values("date").map(previous),index=exposures.index)
-    lagged.loc[source_date.ne(expected)] = np.nan
-    sector = pd.get_dummies(panel["sector"],prefix="sector",dtype=float)
-    sector = sector.loc[:,sorted(sector.columns)[1:]]  # first sector is reference
-    design = lagged.join(sector).assign(market=1.)
-    design = design[["market"]+list(sector.columns)+list(exposures.columns)]
-    coefficients, residuals, ranks = [], [], []
-    for date, section in design.groupby(level="date"):
-        x = section.droplevel("date")
-        y = panel.xs(date)["return"].reindex(x.index)
-        valid = x.notna().all(axis=1)&y.notna()
-        x,y=x.loc[valid],y.loc[valid]
-        if len(x)<max(minimum,x.shape[1]+5):
-            continue
-        # Absent sectors produce zero columns: skip this date to keep consistent factors.
-        coef,_,rank,_=np.linalg.lstsq(x.to_numpy(),y.to_numpy(),rcond=None)
-        ranks.append({"date":date,"stocks":len(x),"rank":rank,"columns":x.shape[1]})
-        if rank<x.shape[1]:
-            continue
-        coefficients.append(pd.Series(coef,index=x.columns,name=date))
-        residuals.append((y-x@coef).rename(date))
-    if not coefficients:
-        raise ValueError("No full-rank regression dates; expand stock coverage or inspect sectors/data.")
-    return pd.DataFrame(coefficients).sort_index(),pd.DataFrame(residuals).sort_index(),pd.DataFrame(ranks),design
+from data import inputs, build_panel
+from factors import raw_factors
+import matplotlib.pyplot as plt
 
 
-def factor_attribution(X, F, weights):
-    """Return b=X.T@w and each factor variance contribution b*(F@b)."""
-    b = X.T @ weights
-    return b, b * (F @ b)
+def exposures(config):
+    panel = build_panel(config)
+    raw = raw_factors(panel)
+    date = raw.index.get_level_values("date").max()
+    current = raw.xs(date).reindex(config["weights"])
+    if not np.isfinite(current.to_numpy()).all():
+        raise ValueError("A held stock lacks a current factor; do not silently omit it")
+    if len(current) < 2:
+        raise ValueError("Need at least two holdings for relative exposures")
+    scale = current.std(ddof=0)
+    # A constant characteristic cannot distinguish these holdings: assign zero tilt.
+    z = (current-current.mean()).div(scale.replace(0, np.nan)).fillna(0)
+    tilt = (z.T @ pd.Series(config["weights"])).rename("portfolio_exposure")
+    return date, current, z, tilt
+
+
+if __name__ == "__main__":
+    config, output = inputs()
+    date, raw, z, tilt = exposures(config)
+    raw.to_csv(output/"raw_exposures.csv")
+    z.to_csv(output/"stock_exposures.csv")
+    tilt.to_csv(output/"portfolio_exposures.csv")
+    print(f"As of {date.date()}; reference = current holdings, not broad market")
+    print(tilt.to_string(float_format=lambda x:f"{x:.4f}"))
+    fig, axes = plt.subplots(1,2,figsize=(12,5),gridspec_kw={"width_ratios":[2,1]})
+    image = axes[0].imshow(z,aspect="auto",cmap="RdBu_r",vmin=-3,vmax=3)
+    axes[0].set_xticks(range(len(z.columns)),z.columns,rotation=45,ha="right")
+    axes[0].set_yticks(range(len(z)),z.index)
+    fig.colorbar(image,ax=axes[0],label="Holdings-relative Z-score")
+    tilt.plot.barh(ax=axes[1],color="#2563eb")
+    axes[1].axvline(0,color="grey",lw=.7)
+    axes[1].set_title("Weighted tilt vs equal-weight holdings")
+    fig.suptitle(f"Eight style exposures | {date.date()}")
+    fig.tight_layout()
+    fig.savefig(output/"exposures.png",dpi=150)
+    plt.close(fig)

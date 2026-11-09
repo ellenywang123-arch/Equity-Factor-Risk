@@ -23,21 +23,3 @@ def raw_factors(panel):
         outputs.append(x)
     return pd.concat(outputs).rename_axis("date").reset_index().set_index(["date","ticker"]).sort_index().replace([np.inf,-np.inf],np.nan)
 
-
-def standardize(raw, minimum=35):
-    """Daily complete-case universe, 2.5/97.5% clipping then population Z-score."""
-    out = []
-    for date, section in raw.groupby(level="date", sort=True):
-        x = section.droplevel("date")[STYLES].dropna()
-        if len(x)<minimum:
-            continue
-        x = x.clip(x.quantile(.025),x.quantile(.975),axis=1)
-        scale = x.std(ddof=0)
-        if (scale<=1e-12).any():
-            continue
-        x = (x-x.mean())/scale
-        x["date"] = date
-        out.append(x.reset_index().set_index(["date","ticker"]))
-    if not out:
-        raise ValueError("No dates with complete eight-factor coverage. Check financial/share history and sample size.")
-    return pd.concat(out).sort_index()
