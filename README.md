@@ -20,8 +20,6 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe main.py --validate
 # Offline synthetic software check, NOT market results:
 .\.venv\Scripts\python.exe main.py --synthetic --output outputs/synthetic
-# Local tests; no GitHub Actions workflow is included:
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
 Open `outputs/report.html`. All functions below are the actual functions in this repository. No notebook, database or web server is required.
@@ -357,21 +355,7 @@ $$
 
 HTML 展示总风险、贡献表和数据审计，**不再展示 Validation**。数据有效性检查保留：删除报告区块不影响数学结果，但删除输入保护会让缺失风险被掩盖。
 
-## 9. tests/test_model.py：可手动运行的本地测试
-
-保留测试不增加运行主程序的步骤，也不需要 GitHub workflow。`ModelTests` 的每个方法：
-
-| 测试方法 | 用途 |
-| --- | --- |
-| `test_euler_contributions_sum_to_direct_variance` | 打乱权重顺序，仍与直接矩阵方差一致，贡献加总为总方差 |
-| `test_missing_specific_variance_is_rejected` | 缺少特有方差时拒绝计算，不当成零风险 |
-| `test_statement_lag_and_annual_growth` | 核对年报代理日期、同比收入、平均权益 ROE |
-| `test_standardization_and_lagged_regression` | 核对标准化、昨日暴露、协方差正定和特有方差非负 |
-| `test_future_data_does_not_change_past_regressions` | 合成样本加入未来数据后，历史回归不变 |
-
-最后一个只检验合成输入和算法，不证明 Yahoo 数据无重述。`unittest.main()` 仅启动测试，不参与报告。
-
-## 10. 输出文件和可追溯样例
+## 9. 输出文件和可追溯样例
 
 | 文件 | 内容 |
 | --- | --- |
@@ -392,7 +376,7 @@ HTML 展示总风险、贡献表和数据审计，**不再展示 Validation**。
 
 先前滚动诊断含 278 个有效日（2025-10-01 至 2026-11-06），平方收益／预测方差比值 **0.423**，显示这段样本中预测偏高。研究记录留在这里，HTML 为简洁而不显示；移除检验展示不等于修复模型。
 
-## 11. 限制与归属
+## 10. 限制与归属
 
 Yahoo 财报可能重述；180 天假设不等于真实披露日期；当前 sector、存续样本有历史偏差；样本偏科技、行业不平衡、完整案例筛选和窗口选择均影响风险估计。股数、拆股、股息、成交量和财务比率需要独立核对。此项目尚未达到机构风险模型验证标准。
 
