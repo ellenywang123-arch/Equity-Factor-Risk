@@ -1,6 +1,6 @@
 # Equity Portfolio Analytics
 
-Nine configured holdings, eight style exposures, historical volatility, VaR/ES at **95%**, and simulated drawdown. Each risk module prints numbers and saves its own PNG/CSV. No main.py, report.py, HTML report, sector model, extra stock universe, tests folder or GitHub workflow.
+Twenty configured holdings, eight style exposures, factor-model and historical volatility, VaR/ES at **95%**, and simulated drawdown. Each risk module prints numbers and saves its own PNG/CSV. No main.py, report.py, HTML report, sector model, extra stock universe, tests folder or GitHub workflow.
 
 ## 运行
 
@@ -37,7 +37,7 @@ config.json: weights 即全部股票，没有额外 universe
 data.py: Yahoo 下载 / 本地缓存
           ├─ 年报 + 股数 + 价格 → factors.py → risk/factor_model.py → 八因子暴露图和数值
           └─ 持仓价格 → return_data()
-                           ├─ risk/volatility.py → 历史波动图和数值
+                           ├─ risk/volatility.py → 模型／历史波动图和数值
                            ├─ risk/var.py → 95% VaR 图和数值
                            ├─ risk/expected_shortfall.py → 95% ES 图和数值
                            └─ risk/drawdown.py → 模拟净值／回撤图和数值
@@ -45,19 +45,27 @@ data.py: Yahoo 下载 / 本地缓存
 
 `risk/` 恰好五个 `.py`，Python 3 namespace package 不需要额外 `__init__.py`。`data.py` 只提供数据与共同命令参数，不充当总运行器。
 
-## 为什么不再做八因子横截面风险回归？
+## 二十只持仓：恢复八因子横截面风险模型
 
-当前只有九只持仓。如果对九只股票回归八因子加截距，满秩时会完全拟合，不能可靠估计个股残差。于是此版本明确分开：
+所有二十只股票既是持仓，也是回归样本，没有额外 universe，不使用 sector。每个交易日用上一交易日的八个风格暴露加共同截距解释当日收益：
 
-- **八因子：** 描述当前持仓的相对风格特征；没有因子收益、行业项、逐因子方差贡献或 Barra 风险预测。
-- **组合波动率：** 使用持仓收益的历史样本协方差，完全不依赖因子暴露。
-- **VaR / ES / Drawdown：** 使用同一组持仓的历史收益。
+$$
+r_{i,t}=a_t+\sum_{k=1}^{8}z_{i,k,t-1}f_{k,t}+\varepsilon_{i,t}.
+$$
 
-这是根据持仓规模作的模型调整，不能把新波动率叫成原来的 Barra-style 模型波动率，或把风格得分叫做收益回归 Beta。
+满秩时，20条横截面观测估计9个参数，剩余自由度为11。历史日期允许部分财务数据不足，但至少需15只完整股票、且9列设计矩阵满秩；当前暴露则必须覆盖全部持仓。样本仍小，回归和残差估计不稳定，不能等同于机构级 Barra 模型。残差样本方差没有额外的横截面杠杆偏差修正，可能低估特有风险。
+
+- 八因子图只显示持仓内标准化暴露，参照不是全市场。
+- 波动率模块同时输出因子模型估计和直接历史协方差估计，分别命名。
+- VaR/ES/Drawdown继续使用持仓历史收益，与因子模型是不同口径。
 
 ## 股票和配置
 
-AAPL、MSFT 各 15%；GOOGL、AMZN、WMT、KO、JNJ、CAT、XOM 各 10%。它们只是便于演示的模拟组合，没有选股优化或投资推荐。配置中只有 `weights`、`start`、`end`、`window=252`、`confidence=0.95`、`statement_lag_days=180`。
+20只股票：AAPL、MSFT、GOOGL、AMZN、NVDA、META、AVGO、ORCL、CSCO、IBM、WMT、COST、KO、PEP、PG、JNJ、MRK、CAT、XOM、CVX。
+
+AAPL、MSFT各10%；GOOGL、AMZN各8%；其余16只各4%，合计100%。这是人为设定的非等权演示组合，没有优化或投资推荐；非等权也让持仓相对自身等权基准的风格偏离更容易观察。公司覆盖科技／通信、消费、医疗、工业和能源，但仍偏大型公司，不代表全市场。
+
+配置中只有 `weights`、`start`、`end`、`window=252`、`confidence=0.95`、`statement_lag_days=180`。
 
 修改 weights 就同时修改下载列表、计算范围和暴露参照，不需维护另一份股票池。权重须为非负有限值、合计 1。缓存刷新失败不会删除旧文件，请留意下载状态和价格日期。
 
@@ -73,8 +81,11 @@ AAPL、MSFT 各 15%；GOOGL、AMZN、WMT、KO、JNJ、CAT、XOM 各 10%。它们
 | `data.build_panel(config)` | 持仓缓存 | 向后匹配财务、股数及价格，输出 date/ticker panel；无 sector、无审计报告 |
 | `data.return_data(config)` | 仅持仓价格缓存 | 输出股票收益宽表和组合收益 Series；不需要年报 |
 | `factors.raw_factors(panel)` | panel | 逐只股票计算八个原始特征，避免 rolling 混股 |
-| `risk.factor_model.exposures(config)` | 最新八特征和权重 | 输出日期、raw、持仓内 Z-score、加权风格偏离 |
+| `risk.factor_model.standardized_exposures(raw,minimum=15)` | 全历史原始指标 | 逐日完整案例 Z-score；跳过样本不足或零方差日期 |
+| `risk.factor_model.fit_model(config)` | 二十只持仓数据 | 滞后暴露横截面OLS；输出最新暴露、因子收益和残差 |
+| `risk.factor_model.exposures(config)` | fit_model结果及权重 | 输出日期、raw、当前Z-score、加权风格偏离 |
 | `risk.volatility.portfolio_volatility(returns,weights,window)` | 最近252日股票收益 | 输出历史年化波动率、股票样本协方差 |
+| `risk.volatility.model_volatility(model,weights,window)` | 因子收益、残差、当前暴露 | 样本F与对角D → 模型年化波动率和有效历史天数 |
 | `risk.var.sorted_losses(returns)` | 有限的一维组合收益 | 损失取负并升序排列 |
 | `risk.var.historical_var(returns)` | 历史组合收益 | 95% 经验损失分位数 |
 | `risk.expected_shortfall.historical_es(returns)` | 同样的历史收益 | 最坏5%概率区间的平均损失，边界按比例计入 |
@@ -100,7 +111,7 @@ AAPL、MSFT 各 15%；GOOGL、AMZN、WMT、KO、JNJ、CAT、XOM 各 10%。它们
 
 八组名称参考 [MSCI 风格分类](https://www.msci.com/research-and-insights/blog-post/creating-a-common-language-for-factor-investing)，指标是本项目的简单代理。年报只在财年结束后假设180天才使用，超过代理可用日550天不用；不是实际公告时点，也不是完整滚动 TTM。ROE 要求两期正权益。股票分红、股数、价格和成交量的调整基准仍需核对。
 
-只对最新日期、全部实际持仓做标准化，不额外截尾或中性化：
+逐日对具备全部八指标的实际持仓标准化，不额外截尾或中性化：
 
 $$
 z_{i,k}=\frac{x_{i,k}-\overline x_k}{s_k},\qquad
@@ -108,7 +119,7 @@ s_k=\sqrt{\frac1N\sum_i(x_{i,k}-\overline x_k)^2},\qquad
 Exposure_k=\sum_iw_i z_{i,k}.
 $$
 
-若某特征在所有持仓完全相同，设该列相对暴露为0；真实缺失则报错，不剔除股票。正值为高于当前持仓平均，负值为低于平均。**不是相对全市场**；持仓改变会改变参照。所有持仓等权时，加权 Z-score 必然为0，所以这是相对同一批股票等权组合的风格偏离，不能据此判断绝对风险低。原始特征和各股标准化值也一起保存。
+历史日期若某列没有横截面差异或有效股票少于15则跳过；最新日期任何实际持仓缺少指标就报错，不静默删除持仓。正值为高于当前持仓平均，负值为低于平均。**不是相对全市场**；持仓改变会改变参照。所有持仓等权时，加权 Z-score 必然为0，所以这是相对同一批股票等权组合的风格偏离，不能据此判断绝对风险低。原始特征和各股标准化值也一起保存。
 
 ## 收益和波动率
 
@@ -127,7 +138,19 @@ S_{ij}=\frac1{T-1}\sum_t(r_{i,t}-\overline r_i)(r_{j,t}-\overline r_j),\qquad
 \sigma_{p,ann}=\sqrt{252\,w^\top S w}.
 $$
 
-这等于同一窗口组合收益样本标准差乘 $\sqrt{252}$，不是因子模型预测。图中展示60日滚动实现波动率；年度缩放采用常规近似。
+这等于同一窗口组合收益样本标准差乘 $\sqrt{252}$，是历史协方差估计。图中还展示60日滚动实现波动率。
+
+因子模型使用最近最多252个有效回归日，至少126日。F为因子收益的样本协方差，D为每股残差样本方差组成的对角矩阵；每个持仓至少需126条有效残差，不补零：
+
+$$
+F=Cov(f_t),\quad d_i=Var(\varepsilon_{i,t}),\quad D=diag(d_i),\quad
+b=X_{current}^{\top}w,\quad
+\sigma_{model,ann}=\sqrt{252\left(b^{\top}Fb+\sum_iw_i^2d_i\right)}.
+$$
+
+当前X包含八风格及常数列；常数列在系数表中叫market，但它不是SPY收益，也不是额外估计的CAPM Beta。实际用 `np.linalg.lstsq` 逐日估计，不使用未来暴露解释当天收益；收益和暴露必须来自相邻交易日期。F采用简单样本协方差，不再使用Ledoit–Wolf收缩。
+
+残差对角假设忽略个股残差间的共同波动，且没有行业控制；加上20只小样本与财务时点代理，预测需谨慎解释。年度缩放为常规近似。
 
 ## VaR 与 ES：仅95%，一个交易日
 
@@ -162,12 +185,12 @@ $$
 | 模块 | 图 | 数字文件 |
 | --- | --- | --- |
 | factor_model | `exposures.png` | `raw_exposures.csv`, `stock_exposures.csv`, `portfolio_exposures.csv` |
-| volatility | `volatility.png` | `volatility.csv`, `stock_covariance.csv` |
+| volatility | `volatility.png` | `volatility.csv`，含模型／历史两种估计 |
 | var | `var.png` | `var.csv` |
 | expected_shortfall | `es.png` | `es.csv` |
 | drawdown | `drawdown.png` | `drawdown.csv`, `drawdown_summary.csv` |
 
-没有 HTML、data checks 表、因子风险贡献、行业分析或滚动校准报告。缺失持仓、错误权重、非有限收益等必要的报错保护保留在函数内部，避免输出错误数字。
+没有 HTML、data checks 表、逐因子风险贡献图、行业分析或滚动校准报告。缺失持仓、错误权重、非有限收益等必要的报错保护保留在函数内部，避免输出错误数字。
 
 ## 数据限制
 
@@ -175,7 +198,7 @@ Yahoo 年报可能重述，180天假设不能建立严格的历史可用性。�
 
 ## 当前缓存样例
 
-截至2026-11-06、近252日：历史年化波动率11.67%，一天95% VaR约1.06%、ES约1.48%。2020-01-03起的每日再平衡模拟路径最大回撤约−28.10%，当前回撤约−3.65%。不是实际投资业绩或未来风险保证。
+截至2026-11-06，20只持仓全部具备当前八因子数据。模型年化波动率约12.83%、历史年化波动率约12.37%；一天95% VaR约1.28%、ES约1.71%；每日再平衡模拟路径最大回撤约−27.87%、当前回撤约−4.39%。模型有486个有效历史回归日，当前风险估计使用最近252个。不是实际投资业绩或未来风险保证。
 
 ![Holdings-relative exposures](examples/exposures.png)
 

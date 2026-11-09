@@ -1,7 +1,8 @@
-"""Historical portfolio volatility from held-stock sample covariance."""
+"""Eight-style-plus-intercept risk model and historical covariance comparison."""
 import numpy as np
 import pandas as pd
 from data import inputs, return_data
+from .factor_model import fit_model
 import matplotlib.pyplot as plt
 
 
@@ -15,16 +16,41 @@ def portfolio_volatility(returns, weights, window=252):
     return annual, covariance
 
 
+def model_volatility(model, weights, window=252):
+    """Sample factor covariance plus diagonal residual variance; no sector terms."""
+    f = model["factor_returns"].tail(window)
+    eps = model["residuals"].reindex(f.index)
+    F = f.cov()
+    d = eps.var(ddof=1).where(eps.count() >= 126)
+    X = model["z"].assign(market=1.).reindex(columns=F.columns)
+    w = pd.Series(weights).reindex(X.index)
+    d = d.reindex(X.index)
+    if d.isna().any() or not np.isfinite(F.to_numpy()).all():
+        raise ValueError("A holding has insufficient residual history")
+    b = X.T @ w
+    variance = float(b @ F @ b + (w.pow(2)*d).sum())
+    if variance <= 0:
+        raise ValueError("Nonpositive model variance")
+    return float(np.sqrt(252*variance)), len(f)
+
+
 if __name__ == "__main__":
     config, output = inputs()
+    model = fit_model(config)
+    model_annual, history_days = model_volatility(model,config["weights"],config["window"])
     returns, portfolio = return_data(config)
-    annual, covariance = portfolio_volatility(returns,config["weights"],config["window"])
-    covariance.to_csv(output/"stock_covariance.csv")
-    pd.DataFrame([{"as_of":str(portfolio.index[-1].date()),"historical_annual_volatility":annual,"window":config["window"]}]).to_csv(output/"volatility.csv",index=False)
-    print(f"Historical annualized volatility: {annual:.2%}")
+    historical, _ = portfolio_volatility(returns,config["weights"],config["window"])
+    pd.DataFrame([{"as_of":str(model["date"].date()),"model_annual_volatility":model_annual,
+                   "historical_annual_volatility":historical,"factor_history_days":history_days}]).to_csv(output/"volatility.csv",index=False)
+    print(f"Factor-model annualized volatility: {model_annual:.2%}")
+    print(f"Historical annualized volatility: {historical:.2%}")
     rolling = portfolio.rolling(60,min_periods=60).std(ddof=1)*np.sqrt(252)
-    ax = rolling.mul(100).plot(figsize=(9,4),color="#2563eb",title="60-session rolling realized volatility")
-    ax.set_ylabel("Annualized volatility (%)")
-    ax.figure.tight_layout()
-    ax.figure.savefig(output/"volatility.png",dpi=150)
-    plt.close(ax.figure)
+    fig, axes = plt.subplots(1,2,figsize=(12,4),gridspec_kw={"width_ratios":[2,1]})
+    rolling.mul(100).plot(ax=axes[0],color="#2563eb",title="60-session rolling realized volatility")
+    axes[0].set_ylabel("Annualized volatility (%)")
+    axes[1].bar(["Factor model","Historical"],[model_annual*100,historical*100],color=["#2563eb","#93c5fd"])
+    axes[1].set_ylabel("Annualized volatility (%)")
+    axes[1].set_title(f"Current estimates | {model['date'].date()}")
+    fig.tight_layout()
+    fig.savefig(output/"volatility.png",dpi=150)
+    plt.close(fig)
