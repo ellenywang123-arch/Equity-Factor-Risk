@@ -1,4 +1,4 @@
-"""Yahoo download/cache and an explicitly approximate annual-fundamental panel."""
+"""Yahoo download and collect data into an annual-fundamental panel."""
 from pathlib import Path
 import json
 import time
@@ -7,7 +7,6 @@ import pandas as pd
 import yfinance as yf
 import argparse
 import matplotlib
-matplotlib.use("Agg")
 
 
 def inputs():
