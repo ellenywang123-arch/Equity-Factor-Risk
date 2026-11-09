@@ -25,7 +25,7 @@ def synthetic_panel():
     return pd.concat(frames).rename_axis("date").reset_index().set_index(["date","ticker"]).sort_index()
 
 
-def run(config,output="outputs",data_dir="data",synthetic=False):
+def run(config,output="outputs",data_dir="data",synthetic=False,validate=False):
     out=Path(output)
     out.mkdir(parents=True,exist_ok=True)
     if synthetic:
@@ -53,12 +53,14 @@ def run(config,output="outputs",data_dir="data",synthetic=False):
     summary,contributions,specific=portfolio_risk(current,F,D,config["weights"])
     summary["covariance_shrinkage"]=shrinkage
     summary["history_days"]=len(history)
-    validation=rolling_validation(f,eps,design,panel,config["weights"],config["risk_window"],config["min_history"])
+    if validate:
+        validation=rolling_validation(f,eps,design,panel,config["weights"],config["risk_window"],config["min_history"])
+        validation.to_csv(out/"rolling_validation.csv",index=False)
     x.to_csv(out/"exposures.csv")
     f.to_csv(out/"factor_returns.csv")
     F.to_csv(out/"factor_covariance.csv")
     D.rename("daily_specific_variance").to_csv(out/"specific_variance.csv")
-    save_report(out,summary,contributions,specific,audit,validation,config,as_of,synthetic)
+    save_report(out,summary,contributions,specific,audit,config,as_of,synthetic)
     print(json.dumps({"as_of":str(as_of),"synthetic":synthetic,**summary},indent=2))
     print(f"Open {out.resolve() / 'report.html'}")
     return summary
@@ -71,10 +73,11 @@ if __name__=="__main__":
     parser.add_argument("--output",default="outputs")
     parser.add_argument("--download",action="store_true")
     parser.add_argument("--synthetic",action="store_true")
+    parser.add_argument("--validate",action="store_true",help="Save optional past-only calibration to CSV; never shown in the HTML report")
     args=parser.parse_args()
     config=json.loads(Path(args.config).read_text(encoding="utf-8-sig"))
     if args.download and args.synthetic:
         parser.error("Choose Yahoo download or synthetic fixtures")
     if args.download:
         download(config,args.data)
-    run(config,args.output,args.data,args.synthetic)
+    run(config,args.output,args.data,args.synthetic,args.validate)
