@@ -1,12 +1,9 @@
 """Fixed-weight daily-rebalanced illustrative NAV and drawdown, not a live record."""
-import numpy as np
 import pandas as pd
 
 
 def drawdown_series(returns):
     """Include starting NAV=1 when determining the running high-water mark."""
-    if returns.empty or not np.isfinite(returns).all() or (returns <= -1).any():
-        raise ValueError("Provide finite simple returns above -100%")
     nav = (1+returns).cumprod()
     peak = nav.cummax().clip(lower=1.)
     dd = nav/peak-1

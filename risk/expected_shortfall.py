@@ -23,8 +23,6 @@ if __name__ == "__main__":
     config, output = inputs()
     _, portfolio = return_data(config)
     history = portfolio.tail(config["window"])
-    if len(history) < config["window"]:
-        raise ValueError("Insufficient historical return window")
     value, threshold = historical_es(history), historical_var(history)
     pd.DataFrame([{"as_of":str(history.index[-1].date()),"confidence":0.95,"es_1d":value}]).to_csv(output/"es.csv",index=False)
     print(f"One-day historical ES (95%): {value:.2%}")

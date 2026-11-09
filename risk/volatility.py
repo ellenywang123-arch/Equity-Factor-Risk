@@ -8,8 +8,6 @@ import matplotlib.pyplot as plt
 
 def portfolio_volatility(returns, weights, window=252):
     history = returns.tail(window)
-    if len(history) < window:
-        raise ValueError(f"Need {window} complete daily returns")
     covariance = history.cov()
     w = pd.Series(weights).reindex(covariance.index)
     annual = float(np.sqrt(w @ covariance @ w * 252))
@@ -21,16 +19,12 @@ def model_volatility(model, weights, window=252):
     f = model["factor_returns"].tail(window)
     eps = model["residuals"].reindex(f.index)
     F = f.cov()
-    d = eps.var(ddof=1).where(eps.count() >= 126)
+    d = eps.var(ddof=1)
     X = model["z"].assign(market=1.).reindex(columns=F.columns)
     w = pd.Series(weights).reindex(X.index)
     d = d.reindex(X.index)
-    if d.isna().any() or not np.isfinite(F.to_numpy()).all():
-        raise ValueError("A holding has insufficient residual history")
     b = X.T @ w
     variance = float(b @ F @ b + (w.pow(2)*d).sum())
-    if variance <= 0:
-        raise ValueError("Nonpositive model variance")
     return float(np.sqrt(252*variance)), len(f)
 
 

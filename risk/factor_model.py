@@ -2,26 +2,15 @@
 import numpy as np
 import pandas as pd
 from data import inputs, build_panel
-from factors import raw_factors
+from factor import raw_factors
 import matplotlib.pyplot as plt
 
 
-def standardized_exposures(raw, minimum=15):
-    """Daily Z-scores on complete held-stock observations; no extra universe."""
-    sections = []
-    for date, section in raw.groupby(level="date"):
-        x = section.droplevel("date").dropna()
-        if len(x) < minimum:
-            continue
-        scale = x.std(ddof=0)
-        if (scale <= 1e-12).any():
-            continue
-        z = (x-x.mean())/scale
-        z["date"] = date
-        sections.append(z.reset_index().set_index(["date","ticker"]))
-    if not sections:
-        raise ValueError("Need at least 15 stocks with all eight styles on valid dates")
-    return pd.concat(sections).sort_index()
+def standardized_exposures(raw):
+    """Use dates with complete eight-factor data for all held stocks."""
+    n = raw.index.get_level_values("ticker").nunique()
+    complete = raw.dropna().groupby(level="date").filter(lambda x:len(x)==n)
+    return complete.groupby(level="date",group_keys=False).apply(lambda x:(x-x.mean())/x.std(ddof=0))
 
 
 def fit_model(config):
@@ -39,23 +28,11 @@ def fit_model(config):
         X = z.xs(previous).assign(market=1.)
         X = X[["market"]+list(z.columns)]
         y = panel.xs(date)["return"].reindex(X.index)
-        valid = y.notna()
-        X, y = X.loc[valid], y.loc[valid]
-        if len(X) < 15:
-            continue
-        coef, _, rank, _ = np.linalg.lstsq(X.to_numpy(), y.to_numpy(), rcond=None)
-        if rank != X.shape[1]:
-            continue
+        coef = np.linalg.lstsq(X.to_numpy(),y.to_numpy(),rcond=None)[0]
         coefficients.append(pd.Series(coef,index=X.columns,name=date))
         residuals.append((y-X@coef).rename(date))
-    if len(coefficients) < 126:
-        raise ValueError("Need at least 126 valid lagged cross-sectional regression days")
     date = panel.index.get_level_values("date").max()
-    if date not in dates:
-        raise ValueError("Latest date lacks enough complete style exposures")
     current = z.xs(date).reindex(config["weights"])
-    if not np.isfinite(current.to_numpy()).all():
-        raise ValueError("A current holding lacks a style; it will not be dropped")
     return {"date":date,"raw":raw.xs(date).reindex(config["weights"]),"z":current,
             "factor_returns":pd.DataFrame(coefficients).sort_index(),
             "residuals":pd.DataFrame(residuals).sort_index()}
@@ -82,7 +59,7 @@ if __name__ == "__main__":
     fig.colorbar(image,ax=axes[0],label="Holdings-relative Z-score")
     tilt.plot.barh(ax=axes[1],color="#2563eb")
     axes[1].axvline(0,color="grey",lw=.7)
-    axes[1].set_title("Weighted tilt vs equal-weight holdings")
+    axes[1].set_title("Portfolio tilt relative to equal-weight holdings")
     fig.suptitle(f"Eight style exposures | {date.date()}")
     fig.tight_layout()
     fig.savefig(output/"exposures.png",dpi=150)
