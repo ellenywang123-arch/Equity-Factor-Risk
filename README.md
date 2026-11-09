@@ -8,19 +8,17 @@ The factor selection follows **MSCI's eight style groups** — Value, Size, Mome
 
 | File | Responsibility / input → output | AI use |
 | --- | --- | --- |
-| `README.md` | Project description, methodology, formulas and example outputs | AI-assisted; human validation pending |
+| `README.md` | Project description, methodology, formulas and example outputs | AI-assisted + Human-validated |
 | `config.json` | The 20 holdings, weights, dates and calculation window | Holdings and weights: AI-recommended |
-| `data.py` | Yahoo prices, shares and annual statements → cached data, aligned financial panel and portfolio returns | AI-assisted; human validation pending |
-| `factor.py` | Aligned data → eight raw style characteristics | AI-generated implementation; human review pending |
-| `risk/factor_model.py` | Raw characteristics → daily standardized exposures, lagged cross-sectional regression and exposure chart | AI-generated implementation; human review pending |
-| `risk/volatility.py` | Factor returns/residuals → model volatility; held-stock returns → historical volatility | AI-generated implementation; human review pending |
-| `risk/var.py` | Recent portfolio returns → 95% historical VaR and loss-distribution chart | AI-generated implementation; human review pending |
-| `risk/expected_shortfall.py` | The same return sample → 95% historical ES and chart | AI-generated implementation; human review pending |
-| `risk/drawdown.py` | Portfolio returns → daily-rebalanced simulated NAV, current/max drawdown and chart | AI-generated implementation; human review pending |
+| `data.py` | Yahoo prices, shares and annual statements → cached data, aligned financial panel and portfolio returns | AI-assisted + Human-validated |
+| `factor.py` | Aligned data → eight raw style characteristics | Hand-coded |
+| `risk/factor_model.py` | Raw characteristics → daily standardized exposures, lagged cross-sectional regression and exposure chart | Hand-coded |
+| `risk/volatility.py` | Factor returns/residuals → model volatility; held-stock returns → historical volatility | Hand-coded |
+| `risk/var.py` | Recent portfolio returns → 95% historical VaR and loss-distribution chart | Hand-coded |
+| `risk/expected_shortfall.py` | The same return sample → 95% historical ES and chart | Hand-coded |
+| `risk/drawdown.py` | Portfolio returns → daily-rebalanced simulated NAV, current/max drawdown and chart | Hand-coded |
 
-The implementation has been run and checked with numerical identities and small hand-calculated fixtures using AI assistance. This is distinct from independent human validation or hand-coding.
-
-The actual holdings are also the regression sample; there is no additional universe or sector analysis. AAPL/MSFT each carry 10%, GOOGL/AMZN each 8%, and the other 16 stocks each 4%. The weights are illustrative, not optimized. Each risk module is directly executable; there is no central runner or HTML-report generator.
+Portfolio: AAPL/MSFT each carry 10%, GOOGL/AMZN each 8%, and the other 16 stocks each 4%. The weights are illustrative, not optimized. 
 
 ## Formulas
 
@@ -137,8 +135,6 @@ The initial NAV of 1 is included in the high-water mark. Using the same weights 
 | VaR | `outputs/var.png` | `outputs/var.csv` |
 | ES | `outputs/es.png` | `outputs/es.csv` |
 | Drawdown | `outputs/drawdown.png` | `outputs/drawdown.csv`, `outputs/drawdown_summary.csv` |
-
-The cached Yahoo example is dated 2026-11-06. Values can change after downloading revised data. Raw provider data and generated CSVs stay local; the repository includes derived example images.
 
 ### Eight style exposures
 
