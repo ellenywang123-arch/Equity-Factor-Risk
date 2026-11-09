@@ -1,10 +1,12 @@
 # Equity Factor Risk
 
-An eight-style equity risk research project using Yahoo Finance. It estimates portfolio volatility, exposures and Euler risk contributions. This is an AI-assisted, MSCI-inspired educational prototype with approximate fundamental timing, not official MSCI/Barra output. It does not price derivatives or calculate VaR/ES.
+An eight-style equity risk research project using Yahoo Finance. It estimates portfolio volatility, exposures and Euler risk contributions. This is an AI-assisted, MSCI-inspired educational prototype with approximate fundamental timing, not official MSCI/Barra output. It includes historical VaR/ES and simulated daily-rebalanced NAV/drawdown; it does not price derivatives.
 
-**Reading order: data.py → factors.py → risk.py → main.py → report.py.** Detailed Chinese teaching notes and LaTeX formulas follow.
+**Reading order: data.py → factors.py → risk/ → main.py → report.py.** Detailed Chinese teaching notes and LaTeX formulas follow.
 
 ![Illustrative variance contributions](examples/risk_contributions.png)
+
+![Simulated daily-rebalanced NAV and drawdown](examples/drawdown.png)
 
 ## Run
 
@@ -26,7 +28,7 @@ Open `outputs/report.html`. All functions below are the actual functions in this
 
 ## 1. 设计思路：先定义问题，再分配文件职责
 
-我们给定估值日和模拟持仓，计算：组合偏哪些风格／行业、模型年化波动多大、风险由哪些因素贡献。没有进行收益预测选股或组合优化。
+我们给定估值日和模拟持仓，计算：组合偏哪些风格／行业、模型年化波动多大、风险由哪些因素贡献。同时计算历史 VaR/ES 和模拟净值回撤；没有进行收益预测选股或组合优化。
 
 | 符号 | 含义 | 维度 |
 | --- | --- | --- |
@@ -78,11 +80,18 @@ flowchart TD
     R --> F[factors.raw_factors]
     F --> Z[factors.standardize]
     Z --> X[eight style exposures]
-    X --> G[risk.regress: lag exposures]
+    X --> G[factor_model.regress: lag exposures]
     R --> G
+    R --> PR[drawdown.portfolio_returns]
+    PR --> VR[var.historical_var]
+    PR --> ES[expected_shortfall.historical_es]
+    PR --> DD[drawdown_series and summary]
+    VR --> H
+    ES --> H
+    DD --> H
     G --> E[factor returns and residuals]
-    E --> V[risk.covariance: F and D]
-    V --> Q[risk.portfolio_risk]
+    E --> V[volatility.covariance: F and D]
+    V --> Q[volatility.portfolio_risk]
     X --> Q
     C --> Q
     Q --> H[report.save_report: HTML, PNG, CSV, JSON]
@@ -213,9 +222,9 @@ $$
 
 当前没有做正交化或行业／规模中性化；行业用回归 dummy 控制，避免把 Size 对自身中性化后消掉。没有 IC 因子准入筛选：预测未来收益与解释风险是不同任务。
 
-## 6. risk.py：回归、协方差与风险贡献
+## 6. risk/：五个计算文件
 
-### regress(exposures, panel, minimum=35)
+### factor_model.py：regress(exposures, panel, minimum=35)
 
 **Input:** 八风格暴露、股票收益 panel。**Output:** `(f, eps, ranks, design)`。
 
@@ -236,7 +245,7 @@ $$
 
 使用 `np.linalg.lstsq`，要求股票数至少 `max(minimum,K+5)`，并检查满列秩。不满秩日期记入 `ranks`，但不进入因子收益序列。没有默认市值加权。`f` 行为日期、列为 K 个模型项，`eps` 行为日期、列为股票。
 
-### covariance(factor_returns, residuals, minimum=126)
+### volatility.py：covariance(factor_returns, residuals, minimum=126)
 
 **Input:** 选定历史窗口内的 `f, eps`。**Output:** 因子协方差 F、逐股特有方差 Series D、收缩强度。
 
@@ -264,7 +273,7 @@ $$
 
 每股有效残差少于 126 天时保留缺失，不填零。代码返回 Series 而非真正分配 N×N 的 D。对角假设意味着残差互不相关；若遗漏行业等共同因素，残差未必真是独立公司风险。
 
-### portfolio_risk(X, F, D, weights)
+### volatility.py：portfolio_risk(X, F, D, weights)
 
 **Input:** 当前完整暴露、F、特有方差、权重。**Output:** `summary, table, specific_contribution`。
 
@@ -306,7 +315,7 @@ $$
 
 $Fb$ 包含交叉协方差。只算 $b_k^2F_{kk}$ 会漏交叉项。贡献可以为负；大暴露不自动等于大贡献。贡献归属依赖行业参照和编码；Ledoit–Wolf 收缩也不对任意缩放／重参数化保持不变，因此改变模型编码可能改变总风险。
 
-### rolling_validation(f, eps, design, panel, weights, window=252, minimum=126)
+### volatility.py：rolling_validation(f, eps, design, panel, weights, window=252, minimum=126)
 
 **Input:** 历史序列和固定模拟权重。**Output:** 逐日校准 CSV。只在 `--validate` 时调用，不进入 HTML。
 
@@ -318,6 +327,84 @@ CalibrationRatio=\frac{\sum_t r_{p,t}^2}{\sum_t\widehat v_{p,t}}.
 $$
 
 比值低于 1，表示这段比较里预测方差高于实际平方收益。平方收益噪声大，且包含均值平方，不能当成预测准确率。没有使用未来因子收益，但财报重述、行业快照和存续样本仍有偏差，所以不是严格 PIT 回测。缺失或不合格日期可能被跳过，不保证覆盖每个交易日。
+
+
+### 五个文件及数据流程
+
+`risk/` 正好五个 `.py`，采用 Python 3 namespace package，不额外添加 `__init__.py`。旧根目录 `risk.py` 已删除：
+
+```text
+risk/
+  factor_model.py        regress(), factor_attribution()
+  volatility.py          covariance(), portfolio_risk(), rolling_validation()
+  var.py                 sorted_losses(), historical_var()
+  expected_shortfall.py  historical_es()
+  drawdown.py            portfolio_returns(), drawdown_series(), drawdown_summary()
+```
+
+模型波动率调用因子贡献；ES 复用 VaR 中的损失检查。main 另将持仓收益交给 VaR、ES、Drawdown，再把全部输出交给 report。五个文件对应五项风险功能，不是五套独立启动程序。
+
+### factor_model.py：factor_attribution(X, F, weights)
+
+Input 是 `portfolio_risk()` 已检查并对齐的 X/F/w；Output 为 $b=X^\top w$ 和 $C_k=b_k(Fb)_k$。它负责逐因子暴露与方差贡献，不重复所有输入检查。
+
+### var.py：sorted_losses(returns, confidence)
+
+Input 为一维简单收益和置信水平；要求至少两条、全部有限，置信水平严格介于 0 和 1。Output 为升序损失 $L_t=-r_{p,t}$。负损失代表盈利，保留原值，不将负 VaR 截零。
+
+### var.py：historical_var(returns, confidence=0.95)
+
+Input 为最近 `tail_window=252` 个完整持仓收益。将升序损失记作 $L_{(1)},\ldots,L_{(n)}$：
+
+$$
+VaR_c=L_{(\lceil nc\rceil)}.
+$$
+
+Output 是收益比例：0.02 为 2%。使用经验分布反函数，不做线性插值、正态假设或多日平方根缩放，也不使用因子协方差生成情景。没有设置真实资金金额。
+
+### expected_shortfall.py：historical_es(returns, confidence=0.95)
+
+将同样的损失降序排列 $L_{[1]}\ge\cdots\ge L_{[n]}$。令 $m=n(1-c),q=\lfloor m\rfloor,a=m-q$：
+
+$$
+ES_c=\frac{\sum_{j=1}^{q}L_{[j]}+aL_{[q+1]}}{m}.
+$$
+
+若 a=0，边界项为零。精确平均最坏的概率质量，非整数边界按比例计入；不会因为并列值而额外纳入过多尾部。252 日的 99% ES 只有 2.52 条观测的等效尾部质量，估计不稳定。ES 不代表最大损失。
+
+### drawdown.py：portfolio_returns(panel, weights, as_of)
+
+Input 为 panel、权重和截止日；Output 为组合简单收益：
+
+$$
+r_{p,t}=\sum_iw_ir_{i,t}.
+$$
+
+从所有持仓首个共同有效日开始，之后如有内部缺失则停止，不跳过、补零或重新分配权重。要求权重有限且和为 1，组合收益大于 −100%。
+
+对 VaR/ES，它是当前权重的历史冲击；对净值复利，它代表每日重置同样权重的模拟策略，不是固定股数 buy-and-hold。没有费用、税或滑点，不是实际投资业绩。
+
+### drawdown.py：drawdown_series(returns)
+
+Input 为上述收益；Output 是 portfolio_return/nav/drawdown 三列表：
+
+$$
+NAV_t=\prod_{s\le t}(1+r_{p,s}),\qquad
+H_t=\max(1,NAV_1,\ldots,NAV_t),\qquad
+DD_t=\frac{NAV_t}{H_t}-1.
+$$
+
+初始 NAV=1 计入高点，所以首日下跌也产生回撤。回撤是负数。
+
+### drawdown.py：drawdown_summary(path)
+
+Input 为路径；Output 为当前回撤、最大回撤、历史起止日和观测数：
+
+$$
+CurrentDD=DD_T,\qquad MDD=\min_tDD_t.
+$$
+
+VaR/ES 使用最近 252 个完整日，Drawdown 使用截至估值日全部共同有效持仓历史，报告分别注明。main 另用最近 60 日收益标准差乘 $\sqrt{252}$ 展示历史实现波动；与因子模型波动不是同种估计。
 
 ## 7. main.py：统一运行入口
 
@@ -341,26 +428,29 @@ $$
 6. 用截至估值日最近最多 252 个有效因子日估计 F/D，要求至少 126 天。
 7. 把用于历史回归的昨日风格替换为今日风格，构造当前风险暴露。
 8. 算风险贡献；可选执行滚动 CSV。
-9. 写中间文件、调用报告、打印摘要；返回 `summary` 字典。
+9. 用持仓完整收益计算历史 VaR/ES、60 日实现波动率、每日再平衡模拟净值和回撤，输出 `tail_risk.csv` 与 `portfolio_history.csv`。
+10. 写中间文件、调用报告、打印摘要；返回 `summary` 字典。
 
 文件末尾 `if __name__ == "__main__"` 才解析命令并运行；`import main` 不会自动下载。参数为 `--config`、`--data`、`--output`、`--download`、`--synthetic`、`--validate`。下载和 synthetic 不能同时指定。
 
 ## 8. report.py：排版结果，不重新计算风险
 
-### save_report(output, summary, contributions, specific, audit, config, as_of, synthetic=False)
+### save_report(output, summary, contributions, specific, audit, config, as_of, synthetic, tail_metrics, path)
 
 **Input:** 已算好的结果与配置。**Output:** HTML、PNG、CSV、JSON 文件，无金融返回值。
 
 保存逐因子与逐股贡献、审计和摘要；贡献占比乘以 100 画横条图，负贡献用不同颜色；将图片 Base64 嵌入 HTML，因此无需服务器或外部图片链接。标记真实 Yahoo / synthetic、估值日和方法限制。
 
-HTML 展示总风险、贡献表和数据审计，**不再展示 Validation**。数据有效性检查保留：删除报告区块不影响数学结果，但删除输入保护会让缺失风险被掩盖。
+HTML 展示总风险、VaR/ES、贡献表、模拟净值／回撤和数据审计，**不再展示 Validation**。数据有效性检查保留：删除报告区块不影响数学结果，但删除输入保护会让缺失风险被掩盖。
 
 ## 9. 输出文件和可追溯样例
 
 | 文件 | 内容 |
 | --- | --- |
 | `report.html` / `risk_contributions.png` | 报告和贡献图 |
-| `summary.json` | 日期、配置、总风险 |
+| `summary.json` | 日期、配置、总风险、回撤和实现波动 |
+| `tail_risk.csv` | 95%/99% 一天历史 VaR/ES、样本数、尾部概率质量和起止日 |
+| `portfolio_history.csv` / `drawdown.png` | 每日再平衡模拟收益、净值、回撤及图 |
 | `factor_contributions.csv` | 全模型因子暴露、方差贡献、总方差占比、年化波动贡献 |
 | `specific_contributions.csv` | 逐持仓 $w_i^2d_i$ |
 | `exposures.csv` | 八个标准化风格 |
@@ -381,3 +471,7 @@ HTML 展示总风险、贡献表和数据审计，**不再展示 Validation**。
 Yahoo 财报可能重述；180 天假设不等于真实披露日期；当前 sector、存续样本有历史偏差；样本偏科技、行业不平衡、完整案例筛选和窗口选择均影响风险估计。股数、拆股、股息、成交量和财务比率需要独立核对。此项目尚未达到机构风险模型验证标准。
 
 
+
+## 最新历史风险示例
+
+2026-11-06、最近 252 个完整交易日：一天历史 VaR 95% 约 1.06%、ES 95% 约 1.48%；VaR 99% 约 1.71%、ES 99% 约 2.02%。2020-01-03 至 2026-11-06 的每日再平衡模拟路径最大回撤约 −28.10%、当前回撤约 −3.65%。这是不同窗口的历史指标，不是未来损失保证或实际投资业绩。

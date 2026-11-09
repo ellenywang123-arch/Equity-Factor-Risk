@@ -6,7 +6,11 @@ import numpy as np
 import pandas as pd
 from data import download,build_panel
 from factors import raw_factors,standardize
-from risk import regress,covariance,portfolio_risk,rolling_validation
+from risk.factor_model import regress
+from risk.volatility import covariance,portfolio_risk,rolling_validation
+from risk.var import historical_var
+from risk.expected_shortfall import historical_es
+from risk.drawdown import portfolio_returns,drawdown_series,drawdown_summary
 from report import save_report
 
 
@@ -53,6 +57,21 @@ def run(config,output="outputs",data_dir="data",synthetic=False,validate=False):
     summary,contributions,specific=portfolio_risk(current,F,D,config["weights"])
     summary["covariance_shrinkage"]=shrinkage
     summary["history_days"]=len(history)
+    realized=portfolio_returns(panel,config["weights"],as_of)
+    shocks=realized.tail(config.get("tail_window",252))
+    if len(shocks)<config["min_history"]:
+        raise ValueError("Insufficient complete portfolio return history for tail metrics")
+    tail_metrics=pd.DataFrame([
+        {"confidence":c,"historical_var_1d":historical_var(shocks,c),
+         "historical_es_1d":historical_es(shocks,c),"observations":len(shocks),
+         "tail_probability_mass":len(shocks)*(1-c),
+         "start":str(shocks.index[0].date()),"end":str(shocks.index[-1].date())}
+        for c in [.95,.99]])
+    path=drawdown_series(realized)
+    summary.update(drawdown_summary(path))
+    summary["realized_vol_60d"]=float(realized.tail(60).std(ddof=1)*np.sqrt(252))
+    tail_metrics.to_csv(out/"tail_risk.csv",index=False)
+    path.to_csv(out/"portfolio_history.csv")
     if validate:
         validation=rolling_validation(f,eps,design,panel,config["weights"],config["risk_window"],config["min_history"])
         validation.to_csv(out/"rolling_validation.csv",index=False)
@@ -60,7 +79,7 @@ def run(config,output="outputs",data_dir="data",synthetic=False,validate=False):
     f.to_csv(out/"factor_returns.csv")
     F.to_csv(out/"factor_covariance.csv")
     D.rename("daily_specific_variance").to_csv(out/"specific_variance.csv")
-    save_report(out,summary,contributions,specific,audit,config,as_of,synthetic)
+    save_report(out,summary,contributions,specific,audit,config,as_of,synthetic,tail_metrics,path)
     print(json.dumps({"as_of":str(as_of),"synthetic":synthetic,**summary},indent=2))
     print(f"Open {out.resolve() / 'report.html'}")
     return summary
